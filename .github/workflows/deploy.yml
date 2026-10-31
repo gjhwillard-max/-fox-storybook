@@ -1,4 +1,5 @@
 name: Deploy Fox Storybook
+# Publishes the prebuilt dist directory to GitHub Pages.
 on:
   push:
     branches: [main]
