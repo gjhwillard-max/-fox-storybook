@@ -5,6 +5,7 @@ const painting = document.querySelector('#painting');
 const strength = document.querySelector('#strength');
 const tilt = document.querySelector('#tilt');
 const message = document.querySelector('#status');
+const paintWildlife = createWildlife(scene);
 const reduce = matchMedia('(prefers-reduced-motion: reduce)');
 const clamp = value => Math.max(-1, Math.min(1, value));
 let mode, draw, frameId = 0, last = 0, elapsed = 0;
@@ -30,6 +31,9 @@ void main() {
   vec2 offset = travel * (region.r-.44) * vec2(.062,.043);
   float gust = sin(t*1.21 + p.y*7. - p.x*4.) + .38*sin(t*2.37+p.x*10.);
   vec2 wind = region.g * vec2(.0054*gust,.0019*cos(t*1.21+p.x*5.));
+  // Longer grass bends more at the tips; roots and the sleeping fox stay quiet.
+  float grass = smoothstep(.63,.79,p.y)*smoothstep(.46,.72,region.g)*(1.-region.b);
+  wind += grass * vec2(.0035*gust+.0014*sin(t*1.85-p.x*23.),.0009*cos(t*1.21-p.x*8.));
   float breath = .5-.5*cos(t*1.39);
   vec2 animal = vec2(0.,-.0055*breath*oval(p,vec2(.588,.753),vec2(.12,.08)));
   float beat = mod(t+2.,12.);
@@ -129,6 +133,7 @@ function frame(now) {
     const idle=mode==='alive' ? Math.sin(elapsed*.5)*.3 : 0;
     painting.style.transform='translate('+((x+idle)*1.1*power)+'%,'+(y*.85*power)+'%) scale('+(1+.034*power)+')';
   }
+  if (mode==='alive') paintWildlife(elapsed,x,y,power);
   if (mode==='alive' || Math.abs(aimX-x)+Math.abs(aimY-y)>.0005) wake();
 }
 function target(a,b) { aimX=clamp(a); aimY=clamp(b); wake(); }
