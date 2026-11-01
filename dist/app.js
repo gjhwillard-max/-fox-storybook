@@ -6,6 +6,9 @@ const strength = document.querySelector('#strength');
 const tilt = document.querySelector('#tilt');
 const message = document.querySelector('#status');
 const paintWildlife = createWildlife(scene);
+const poses = new Image();
+poses.src = canvas.dataset.poses;
+const poseReady = poses.decode().then(()=>true,()=>false);
 const reduce = matchMedia('(prefers-reduced-motion: reduce)');
 const clamp = value => Math.max(-1, Math.min(1, value));
 let mode, draw, frameId = 0, last = 0, elapsed = 0;
@@ -47,11 +50,23 @@ void main() {
   gl_Position = vec4(pos.x*2.-1.,1.-pos.y*2.,0.,1.);
 }`;
 const fragment = `
-precision mediump float;
+precision highp float;
 varying vec2 uv;
-uniform sampler2D paper;
+uniform sampler2D paper, poses;
+uniform float pose;
+vec3 posePixel(vec2 local,float index) {
+  vec2 tile=vec2(mod(index,8.),floor(index/8.));
+  return texture2D(poses,(tile+clamp(local,vec2(.5/248.),vec2(247.5/248.)))/8.).rgb;
+}
 void main() {
-  gl_FragColor = texture2D(paper,uv);
+  vec3 colour=texture2D(paper,uv).rgb;
+  vec2 local=(uv*vec2(1320.,1422.)-vec2(498.,898.))/248.;
+  if (pose>0. && all(greaterThanEqual(local,vec2(0.))) && all(lessThanEqual(local,vec2(1.)))) {
+    vec3 painted=mix(posePixel(local,floor(pose)),posePixel(local,ceil(pose)),fract(pose));
+    float edge=min(min(local.x,local.y),min(1.-local.x,1.-local.y));
+    colour=mix(colour,painted,smoothstep(0.,.012,edge)*min(1.,min(pose,63.-pose)));
+  }
+  gl_FragColor=vec4(colour,1.);
 }`;
 
 async function makeRenderer() {
@@ -95,15 +110,19 @@ async function makeRenderer() {
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,gl.createBuffer());
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint16Array(indices),gl.STATIC_DRAW);
   const loc = name => gl.getUniformLocation(program,name);
-  {
+  const hasPoses=await poseReady;
+  for (const [unit,image] of [painting,hasPoses?poses:painting].entries()) {
+    gl.activeTexture(gl.TEXTURE0+unit);
     gl.bindTexture(gl.TEXTURE_2D,gl.createTexture());
     for (const key of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D,key,gl.CLAMP_TO_EDGE);
     for (const key of [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D,key,gl.LINEAR);
-    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,painting);
-    gl.uniform1i(loc('paper'),0);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,image);
+    gl.uniform1i(loc(unit?'poses':'paper'),unit);
   }
   const gaze = loc('gaze'), time = loc('t'), amount = loc('amount'), alive = loc('alive');
-  draw = power => {
+  const pose=loc('pose');
+  draw = (power,poseIndex) => {
+    gl.uniform1f(pose,hasPoses?poseIndex:0);
     const ratio = Math.min(devicePixelRatio || 1,2,1320/Math.max(1,scene.clientWidth));
     const w = Math.max(1,Math.round(scene.clientWidth*ratio)), h = Math.max(1,Math.round(scene.clientHeight*ratio));
     if (canvas.width!==w || canvas.height!==h) { canvas.width=w; canvas.height=h; }
@@ -114,8 +133,26 @@ async function makeRenderer() {
     gl.uniform1f(alive,mode==='alive' ? 1 : 0);
     gl.drawElements(gl.TRIANGLES,indices.length,gl.UNSIGNED_SHORT,0);
   };
-  painting.style.transform='';
+  painting.parentElement.style.transform='';
   wake();
+}
+// Seven seconds awake, followed by a longer sleep. The first stir is three seconds in.
+let foxTime=0;
+const flatFox=document.createElement('canvas');
+flatFox.id='flat-fox';
+flatFox.width=flatFox.height=248;
+flatFox.hidden=true;
+painting.after(flatFox);
+const flatContext=flatFox.getContext('2d');
+function flatPose(index) {
+  flatFox.hidden=!(index>0 && poses.naturalWidth && poses.complete);
+  if (flatFox.hidden) return;
+  function tile(n,opacity) {
+    flatContext.globalAlpha=opacity;
+    flatContext.drawImage(poses,n%8*248,Math.floor(n/8)*248,248,248,0,0,248,248);
+  }
+  tile(Math.floor(index),1);
+  tile(Math.ceil(index),index%1);
 }
 function wake() {
   if (!frameId && visible && !document.hidden && mode!=='still') frameId=requestAnimationFrame(frame);
@@ -128,10 +165,14 @@ function frame(now) {
   const ease=1-Math.exp(-11*dt);
   x+=(aimX-x)*ease; y+=(aimY-y)*ease;
   const power=Number(strength.value)/100;
-  if (draw) { draw(power); canvas.hidden=false; }
+  if (mode==='alive') foxTime+=dt;
+  const phase=foxTime%28-3;
+  const poseIndex=mode==='alive' && phase>0 && phase<7.2 ? phase*63/7.2 : 0;
+  if (draw) { draw(power,poseIndex); canvas.hidden=false; flatFox.hidden=true; }
   else {
     const idle=mode==='alive' ? Math.sin(elapsed*.5)*.3 : 0;
-    painting.style.transform='translate('+((x+idle)*1.1*power)+'%,'+(y*.85*power)+'%) scale('+(1+.034*power)+')';
+    flatPose(poseIndex);
+    painting.parentElement.style.transform='translate('+((x+idle)*1.1*power)+'%,'+(y*.85*power)+'%) scale('+(1+.034*power)+')';
   }
   if (mode==='alive') paintWildlife(elapsed,x,y,power);
   if (mode==='alive' || Math.abs(aimX-x)+Math.abs(aimY-y)>.0005) wake();
@@ -141,8 +182,9 @@ function select(next) {
   mode=scene.dataset.mode=next;
   for (const button of document.querySelectorAll('button[data-mode]')) button.setAttribute('aria-pressed',String(button.dataset.mode===mode));
   message.textContent={still:'Original composition. Every detail at rest.',parallax:'Drag across the drawing, move your cursor, or use the arrow keys.',alive:'The canopy stirs and the fox dreams. Drag across the glade to explore.'}[mode];
+  if (mode!=='alive') { flatFox.hidden=true; foxTime=0; }
   if (mode==='still') {
-    x=y=aimX=aimY=0; neutral=null; canvas.hidden=true; painting.style.transform='';
+    x=y=aimX=aimY=0; neutral=null; canvas.hidden=true; painting.parentElement.style.transform='';
   }
   wake();
 }

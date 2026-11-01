@@ -7,8 +7,8 @@ s=s.replace('<link rel="stylesheet" href="style.css">','<style>'+(dist/'style.cs
 for script in ('wildlife.js', 'app.js'):
  s=s.replace(f'<script src="{script}"></script>', '<script>'+(dist/script).read_text()+'</script>')
 def embed(m):
- p=dist/m[2];mime='image/jpeg' if p.suffix=='.jpeg' else 'image/png'
+ p=dist/m[2];mime='image/jpeg' if p.suffix=='.jpeg' else 'image/webp' if p.suffix=='.webp' else 'image/png'
  return m[1]+'="data:'+mime+';base64,'+base64.b64encode(p.read_bytes()).decode()+'"'
-s=re.sub(r'(src|data-field)="(assets/[^\"]+)"',embed,s)
+s=re.sub(r'(src|data-field|data-poses)="(assets/[^\"]+)"',embed,s)
 s=s.replace('href="proof.html"','href="dist/proof.html"')
 (root/'standalone.html').write_text(s)
